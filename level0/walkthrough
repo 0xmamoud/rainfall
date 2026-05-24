@@ -1,0 +1,85 @@
+# Level0 Walkthrough
+
+The reconstructed source is available in `source.c`.
+
+The binary is owned by `level1` and has the setuid bit enabled:
+
+```sh
+ls -la
+```
+
+Relevant output:
+
+```txt
+-rwsr-x---+ 1 level1 users 747441 Mar  6  2016 level0
+```
+
+This means that when `level0` executes the binary, the process runs with the effective UID of `level1`.
+
+Running the program without an argument crashes:
+
+```sh
+./level0
+```
+
+Output:
+
+```txt
+Segmentation fault (core dumped)
+```
+
+This happens because the program directly uses `argv[1]` without checking `argc`.
+
+Running it with a wrong numeric argument prints an error:
+
+```sh
+./level0 1
+```
+
+Output:
+
+```txt
+No !
+```
+
+Using `gdb`, the main function shows that the program passes `argv[1]` to `atoi`:
+
+```asm
+mov    eax,DWORD PTR [ebp+0xc]
+add    eax,0x4
+mov    eax,DWORD PTR [eax]
+mov    DWORD PTR [esp],eax
+call   atoi
+```
+
+The return value of `atoi` is then compared with `0x1a7`:
+
+```asm
+cmp    eax,0x1a7
+```
+
+`0x1a7` is `423` in decimal:
+
+```gdb
+p/d 0x1a7
+```
+
+When the comparison succeeds, the program retrieves the effective UID/GID and applies them with `setresuid` and `setresgid`, then launches a shell using `execv`.
+
+Exploit:
+
+```sh
+./level0 423
+```
+
+The spawned shell has `level1` privileges. The flag can then be read:
+
+```sh
+cat /home/user/level1/.pass
+```
+
+Flag:
+
+```txt
+1fe8a524fa4bec01ca4ea2a869af2a02260d4a7d5fe7e7c24d8617e6dca12d3a
+```
