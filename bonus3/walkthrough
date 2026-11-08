@@ -1,0 +1,61 @@
+# Bonus3 Walkthrough
+
+Binary is setuid `end` (the final user). It reads the password file and gives a
+shell only if your argument equals the password.
+
+```c
+int main(int argc, char **argv) {
+  char buffer[132];
+  FILE *f;
+
+  f = fopen("/home/user/end/.pass", "r");
+  if (f == NULL || argc != 2)
+    return -1;
+
+  fread(buffer, 1, 66, f);            // read 66 bytes of the password
+  buffer[65] = 0;
+
+  buffer[atoi(argv[1])] = 0;          // NUL at an attacker-controlled index
+
+  fread(buffer + 66, 1, 65, f);
+  fclose(f);
+
+  if (strcmp(buffer, argv[1]) == 0)   // password == our argument -> shell
+    execl("/bin/sh", "sh", NULL);
+  else
+    puts(buffer + 66);
+  return 0;
+}
+```
+
+## Vulnerability
+
+Logic flaw, not a memory corruption. The shell requires `strcmp(buffer, argv[1]) == 0`,
+i.e. our argument must equal the password we do not know. But the same argument also
+chooses where a NUL byte is written: `buffer[atoi(argv[1])] = 0`.
+
+The one argument does double duty, and we use it to make BOTH sides of the compare
+empty:
+
+- As an index: `atoi("") == 0`, so `buffer[0] = 0` truncates the loaded password to
+  the empty string `""`.
+- As the compared value: `argv[1]` is `""`.
+
+Then `strcmp("", "") == 0` → the password check passes without ever knowing it.
+
+## Exploitation
+
+```sh
+./bonus3 ""
+```
+
+- `""` -> `atoi("") = 0` -> `buffer[0] = 0` -> `buffer` becomes `""`.
+- `""` is also compared: `strcmp("", "") = 0` -> `execl("/bin/sh", "sh", NULL)`.
+
+Result: shell as `end`, the final user of the wargame.
+
+Flag:
+
+```txt
+3321b6f81659f9a71c76616f606e4b50189cecfea611393d5d649f75e157353c
+```
